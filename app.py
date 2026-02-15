@@ -24,27 +24,61 @@ if st.button("Fetch trades", type="primary"):
         st.error("Enter a valid 42-character 0x address.")
         st.stop()
 
-    status = st.empty()
-    status.info("Fetching trades...")
-
-    try:
-        resp = requests.post(HL_URL, json={
-            "type": "userFills",
-            "user": address,
-        }, timeout=30)
-        resp.raise_for_status()
-        all_fills = resp.json()
-    except Exception as e:
-        st.error(f"API error: {e}")
-        st.stop()
-
-    # Filter perps only (spot coins start with @)
-    all_fills = [f for f in all_fills if not f.get("coin", "").startswith("@")]
-
-    # Filter by date range
     start_ms = int(datetime.combine(start_date, datetime.min.time()).timestamp() * 1000)
     end_ms = int(datetime.combine(end_date, datetime.max.time()).timestamp() * 1000)
-    all_fills = [f for f in all_fills if start_ms <= f["time"] <= end_ms]
+
+    MAX_FILLS = 10000
+
+    all_fills = []
+    current_end = end_ms
+    status = st.empty()
+
+    for page in range(100):
+        status.info(f"Page {page + 1} — {len(all_fills):,} perp fills so far...")
+
+        for attempt in range(3):
+            try:
+                resp = requests.post(HL_URL, json={
+                    "type": "userFillsByTime",
+                    "user": address,
+                    "startTime": start_ms,
+                    "endTime": current_end,
+                }, timeout=30)
+
+                if resp.status_code == 429:
+                    wait = 5 * (attempt + 1)
+                    status.warning(f"Rate limited — waiting {wait}s...")
+                    time.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                fills = resp.json()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    status.error(f"Stopped: {e}")
+                    fills = None
+                time.sleep(5)
+        else:
+            fills = None
+
+        if not fills:
+            break
+
+        # Filter perps only (spot coins start with @)
+        perp_fills = [f for f in fills if not f.get("coin", "").startswith("@")]
+        all_fills.extend(perp_fills)
+
+        oldest = fills[-1]["time"]
+        if oldest >= current_end:
+            break
+        current_end = oldest - 1
+
+        if len(all_fills) >= MAX_FILLS:
+            status.warning(f"Hit {MAX_FILLS:,} fill cap — stopping. Adjust date range for more.")
+            break
+
+        time.sleep(2)
 
     status.empty()
 
