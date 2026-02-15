@@ -65,8 +65,11 @@ if st.button("Fetch trades", type="primary"):
         if not fills:
             break
 
+        # Filter to perps only (spot coins start with @)
+        fills = [f for f in fills if not f.get("coin", "").startswith("@")]
+
         all_fills.extend(fills)
-        oldest = fills[-1]["time"]
+        oldest = fills[-1]["time"] if fills else current_end
         if oldest >= current_end:
             break
         current_end = oldest - 1
